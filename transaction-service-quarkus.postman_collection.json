@@ -1,0 +1,152 @@
+{
+	"info": {
+		"_postman_id": "53d92de4-ebf0-4602-8bdf-f96efd277f53",
+		"name": "transaction-service-quarkus",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "19442902"
+	},
+	"item": [
+		{
+			"name": "transactions-deposit",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"accountId\": \"68c9707f823bbed1103f0a59\",\r\n    \"customerId\": \"68c3c258ed0eda43227fd7b3\",\r\n    \"amount\": 250.00,\r\n    \"description\": \"Deposito en cuenta de ahorros\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8082/transactions/deposit",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8082",
+					"path": [
+						"transactions",
+						"deposit"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "transactions-withdrawal",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"accountId\": \"68c9707f823bbed1103f0a59\",\n    \"customerId\": \"68c3c258ed0eda43227fd7b3\",\n    \"amount\": 50.00,\n    \"description\": \"Retiro para compras\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8082/transactions/withdrawal",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8082",
+					"path": [
+						"transactions",
+						"withdrawal"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "transactions-payment",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"accountId\": \"68d219ed3974c72f914fc035\",\n    \"customerId\": \"68d219bcdff04a9baa190f8f\",\n    \"amount\": 200.00,\n    \"description\": \"Pago de deuda de tarjeta de credito\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8082/transactions/payment",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8082",
+					"path": [
+						"transactions",
+						"payment"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "transactions-consumption",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"accountId\": \"68d219ed3974c72f914fc035\",\n  \"customerId\": \"68d219bcdff04a9baa190f8f\",\n  \"amount\": 150000.00,\n  \"description\": \"Compra en tienda en linea\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8082/transactions/consumption",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8082",
+					"path": [
+						"transactions",
+						"consumption"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

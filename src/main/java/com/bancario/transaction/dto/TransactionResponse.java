@@ -11,5 +11,6 @@ public record TransactionResponse(
         TransactionType transactionType,
         BigDecimal amount,
         LocalDateTime transactionDate,
-        String description
+        String description,
+        String externalReference
 ) {}

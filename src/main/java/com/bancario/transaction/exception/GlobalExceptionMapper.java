@@ -1,4 +1,4 @@
-package com.bancario.account.exception;
+package com.bancario.transaction.exception;
 
 import com.mongodb.MongoCommandException;
 import jakarta.ws.rs.core.Context;
@@ -19,15 +19,31 @@ public class GlobalExceptionMapper implements ExceptionMapper<Exception> {
         int status;
         String error;
 
-        if (exception instanceof IllegalArgumentException) {
-            status = Response.Status.BAD_REQUEST.getStatusCode();
-            error = "Bad Request";
-        } else if (exception instanceof MongoCommandException) {
-            status = Response.Status.INTERNAL_SERVER_ERROR.getStatusCode();
-            error = "Database Error";
-        } else {
-            status = Response.Status.INTERNAL_SERVER_ERROR.getStatusCode();
-            error = "Internal Server Error";
+        // 1. MANEJO ESPECÍFICO (Insuficiencia de Fondos - La más específica)
+        switch (exception) {
+            case InsufficientFundsException insufficientFundsException -> {
+                status = Response.Status.BAD_REQUEST.getStatusCode(); // 400
+
+                error = "Insufficient Funds"; // Mensaje específico para el error de negocio
+            }
+            // 2. MANEJO GENÉRICO DE VALIDACIÓN DE NEGOCIO (Menos específico)
+            case IllegalArgumentException illegalArgumentException -> {
+                status = Response.Status.BAD_REQUEST.getStatusCode(); // 400
+
+                error = "Bad Request";
+            }
+            // 3. MANEJO DE ERRORES DE INFRAESTRUCTURA
+            case MongoCommandException mongoCommandException -> {
+                status = Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(); // 500
+
+                error = "Database Error";
+            }
+            // 4. MANEJO DE ERRORES POR DEFECTO
+            case null, default -> {
+                status = Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(); // 500
+
+                error = "Internal Server Error";
+            }
         }
 
         ApiError apiError = ApiError.builder()

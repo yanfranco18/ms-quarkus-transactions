@@ -1,13 +1,12 @@
 package com.bancario.transaction.client;
 
 import com.bancario.transaction.dto.AccountResponse;
+import com.bancario.transaction.dto.AccountTransactionStatus;
 import io.smallrye.mutiny.Uni;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 
-// Esta anotación le dice a Quarkus que es un cliente REST.
-// El 'baseUri' se toma de 'application.properties'.
 @RegisterRestClient(configKey = "account-service")
 @Path("/accounts")
 public interface AccountServiceRestClient {
@@ -22,4 +21,20 @@ public interface AccountServiceRestClient {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     Uni<AccountResponse> updateAccountBalance(@PathParam("accountId") String accountId, AccountResponse accountResponse);
+
+    /**
+     * Llama al GET /accounts/{accountId}/transaction-status
+     * Utilizado para obtener los límites y el contador actual para aplicar la tarifa.
+     */
+    @GET
+    @Path("/{accountId}/transaction-status")
+    Uni<AccountTransactionStatus> getTransactionStatus(@PathParam("accountId") String accountId);
+
+    /**
+     * Llama al PATCH /accounts/{accountId}/increment-transactions
+     * Utilizado para actualizar el contador de transacciones de forma atómica.
+     */
+    @PATCH // PATCH es el verbo correcto para actualizar un subrecurso.
+    @Path("/{accountId}/increment-transactions")
+    Uni<Void> incrementTransactions(@PathParam("accountId") String accountId);
 }

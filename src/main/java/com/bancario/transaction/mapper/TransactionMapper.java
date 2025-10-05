@@ -13,9 +13,11 @@ public interface TransactionMapper {
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "transactionType", ignore = true)
     @Mapping(target = "transactionDate", ignore = true)
+    @Mapping(target = "externalReference", ignore = true)
     Transaction toEntity(TransactionRequest request);
 
     @Mapping(target = "id", source = "id")
+    @Mapping(target = "externalReference", source = "externalReference")
     TransactionResponse toResponse(Transaction transaction);
 
     default String map(ObjectId objectId) { // <-- Renombra el método a un nombre genérico como 'map'

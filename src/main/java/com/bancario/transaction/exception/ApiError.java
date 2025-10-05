@@ -1,4 +1,4 @@
-package com.bancario.account.exception;
+package com.bancario.transaction.exception;
 
 import lombok.Builder;
 import lombok.Data;

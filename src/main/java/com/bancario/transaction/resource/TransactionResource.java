@@ -2,10 +2,12 @@ package com.bancario.transaction.resource;
 
 import com.bancario.transaction.dto.TransactionRequest;
 import com.bancario.transaction.dto.TransactionResponse;
+import com.bancario.transaction.dto.TransferRequest;
 import com.bancario.transaction.service.TransactionService;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
+import jakarta.validation.Valid;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -147,5 +149,26 @@ public class TransactionResource {
         // Nota: Este método debe devolver Multi<TransactionResponse>
         // para un flujo de datos reactivo.
         return transactionService.findByAccountId(accountId);
+    }
+
+    @POST
+    @Path("/transfers")
+    @Operation(summary = "Realiza una transferencia de fondos entre dos cuentas.",
+            description = "Orquesta el débito de la cuenta de origen y el crédito de la cuenta de destino, aplicando las reglas de tarificación.")
+
+    @RequestBody(required = true, description = "Datos de la cuenta de origen, destino y monto.",
+            content = @Content(schema = @Schema(implementation = TransferRequest.class)))
+
+    @APIResponse(responseCode = "200", description = "Transferencia exitosa.",
+            content = @Content(schema = @Schema(implementation = TransactionResponse.class)))
+    @APIResponse(responseCode = "400", description = "Solicitud inválida, cuenta no encontrada, saldo insuficiente, o cuenta no activa (Manejado por GlobalExceptionMapper).",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON))
+    @APIResponse(responseCode = "500", description = "Fallo interno del servidor o error de compensación.",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON))
+    public Uni<Response> processTransfer(@Valid TransferRequest request) {
+        return transactionService.processTransfer(request)
+                .onItem().transform(response ->
+                        Response.ok(response).build()
+                );
     }
 }

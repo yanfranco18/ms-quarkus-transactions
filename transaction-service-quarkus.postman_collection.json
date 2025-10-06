@@ -21,7 +21,7 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\r\n    \"accountId\": \"68c9707f823bbed1103f0a59\",\r\n    \"customerId\": \"68c3c258ed0eda43227fd7b3\",\r\n    \"amount\": 250.00,\r\n    \"description\": \"Deposito en cuenta de ahorros\"\r\n}",
+					"raw": "{\r\n    \"accountId\": \"68dd338b11df9ab17e6d22dc\",\r\n    \"customerId\": \"68dd2f139efa39ca431a4e3f\",\r\n    \"amount\": 100.00,\r\n    \"description\": \"Deposito de prueba gratuito 6\"\r\n}",
 					"options": {
 						"raw": {
 							"language": "json"
@@ -29,14 +29,11 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8082/transactions/deposit",
-					"protocol": "http",
+					"raw": "{{URL_BASE}}/deposit",
 					"host": [
-						"localhost"
+						"{{URL_BASE}}"
 					],
-					"port": "8082",
 					"path": [
-						"transactions",
 						"deposit"
 					]
 				}
@@ -58,7 +55,7 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"accountId\": \"68c9707f823bbed1103f0a59\",\n    \"customerId\": \"68c3c258ed0eda43227fd7b3\",\n    \"amount\": 50.00,\n    \"description\": \"Retiro para compras\"\n}",
+					"raw": "{\n    \"accountId\": \"68dd338b11df9ab17e6d22dc\",\n    \"customerId\": \"68dd2f139efa39ca431a4e3f\",\n    \"amount\": 50.00,\n    \"description\": \"Retiro de prueba 2 cobro comision.\"\n}",
 					"options": {
 						"raw": {
 							"language": "json"
@@ -66,14 +63,11 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8082/transactions/withdrawal",
-					"protocol": "http",
+					"raw": "{{URL_BASE}}/withdrawal",
 					"host": [
-						"localhost"
+						"{{URL_BASE}}"
 					],
-					"port": "8082",
 					"path": [
-						"transactions",
 						"withdrawal"
 					]
 				}
@@ -100,14 +94,11 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8082/transactions/payment",
-					"protocol": "http",
+					"raw": "{{URL_BASE}}/payment",
 					"host": [
-						"localhost"
+						"{{URL_BASE}}"
 					],
-					"port": "8082",
 					"path": [
-						"transactions",
 						"payment"
 					]
 				}
@@ -134,19 +125,80 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:8082/transactions/consumption",
-					"protocol": "http",
+					"raw": "{{URL_BASE}}/consumption",
 					"host": [
-						"localhost"
+						"{{URL_BASE}}"
 					],
-					"port": "8082",
 					"path": [
-						"transactions",
 						"consumption"
 					]
 				}
 			},
 			"response": []
+		},
+		{
+			"name": "transfers-between-checks",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"sourceAccountNumber\": \"0200-17085138\",\n    \"targetAccountNumber\": \"0200-13360063\",\n    \"amount\": 50.00,\n    \"description\": \"Transferencia de prueba exitosa\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{URL_BASE}}/transfers",
+					"host": [
+						"{{URL_BASE}}"
+					],
+					"path": [
+						"transfers"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "URL_BASE",
+			"value": ""
 		}
 	]
 }

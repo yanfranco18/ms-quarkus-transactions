@@ -37,4 +37,15 @@ public interface AccountServiceRestClient {
     @PATCH // PATCH es el verbo correcto para actualizar un subrecurso.
     @Path("/{accountId}/increment-transactions")
     Uni<Void> incrementTransactions(@PathParam("accountId") String accountId);
+
+    /**
+     * Obtiene los detalles de una cuenta usando su número de cuenta.
+     * Utilizado para resolver IDs y validar cuentas de origen/destino en transferencias.
+     *
+     * El Path coincide con el endpoint expuesto por el Account-Service: /accounts/by-number/{accountNumber}
+     */
+    @GET
+    @Path("/by-number/{accountNumber}")
+    @Produces(MediaType.APPLICATION_JSON)
+    Uni<AccountResponse> getAccountByNumber(@PathParam("accountNumber") String accountNumber);
 }

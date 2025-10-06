@@ -15,6 +15,7 @@ import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.NotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
@@ -170,6 +171,196 @@ public class TransactionServiceImpl implements TransactionService {
                 })
                 // *** Se utiliza el mapper inyectado: MapStruct hace la magia ***
                 .onItem().transform(transactionMapper::toResponse);
+    }
+
+    /**
+     * Procesa una transferencia de fondos entre dos cuentas, actuando como un orquestador.
+     * * La transferencia sigue un proceso atómico:
+     * 1. Resuelve los IDs de cuenta de origen y destino usando sus números.
+     * 2. Valida el estado 'ACTIVE' de ambas cuentas.
+     * 3. Ejecuta un retiro (WITHDRAWAL) interno en la cuenta de origen (incluye validación de saldo).
+     * 4. Si el retiro es exitoso, ejecuta un depósito (DEPOSIT) interno en la cuenta de destino.
+     * 5. Maneja los fallos, incluyendo la necesidad de lógica de compensación si el depósito falla
+     * después de un retiro exitoso.
+     * * @param request Datos de la transferencia (números de cuenta, monto, descripción).
+     * @return Uni<TransactionResponse> Respuesta consolidada de la transferencia.
+     * @throws IllegalArgumentException Si una de las cuentas no se encuentra o no está activa.
+     * @throws InsufficientFundsException Si la cuenta de origen no tiene saldo suficiente.
+     * @throws RuntimeException Si hay fallos en la comunicación con el Account-Service o en el depósito.
+     */
+    @Override
+    public Uni<TransactionResponse> processTransfer(TransferRequest request) {
+        log.info("TRANSFERENCIA INICIADA: De {} a {} por {}",
+                request.sourceAccountNumber(), request.targetAccountNumber(), request.amount());
+
+        // 1. OBTENER CUENTAS POR NÚMERO
+        Uni<AccountResponse> sourceAccountUni = accountServiceRestClient.getAccountByNumber(request.sourceAccountNumber());
+        Uni<AccountResponse> targetAccountUni = accountServiceRestClient.getAccountByNumber(request.targetAccountNumber());
+
+        // Combinar los resultados de ambas búsquedas en un solo flujo
+        return Uni.combine().all().unis(sourceAccountUni, targetAccountUni)
+                .asTuple()
+                // Manejo de errores 404/NotFoundException del REST Client
+                .onFailure().transform(e -> {
+                    if (e instanceof NotFoundException) {
+                        log.error("Transferencia fallida: Una de las cuentas no fue encontrada. Detalles: {}", e.getMessage());
+                        // Lanzamos un IllegalArgumentException para que el GlobalMapper lo atrape como 400 Bad Request
+                        return new IllegalArgumentException("Source or target account not found. Check account numbers.");
+                    }
+                    // Otros errores (e.g., 500 del Account-Service) se pasan como RuntimeException
+                    return new RuntimeException("Failed to retrieve account details for transfer.", e);
+                })
+                .onItem().transformToUni(tuple -> {
+
+                    AccountResponse sourceAccount = tuple.getItem1();
+                    AccountResponse targetAccount = tuple.getItem2();
+
+                    // VALIDACIONES DE ESTADO DE CUENTA
+                    if (sourceAccount.status() != AccountStatus.ACTIVE || targetAccount.status() != AccountStatus.ACTIVE) {
+                        log.error("TRANSFERENCIA FALLIDA: Una o ambas cuentas no están activas. Origen: {}, Destino: {}",
+                                sourceAccount.status(), targetAccount.status());
+                        return Uni.createFrom().failure(new IllegalArgumentException("One or both accounts are not active for transfer."));
+                    }
+                    log.info("Cuentas validadas: Origen ID: {}, Destino ID: {}", sourceAccount.id(), targetAccount.id());
+
+                    // 2. PREPARAR Y EJECUTAR RETIRO (CUENTA DE ORIGEN)
+                    TransactionRequest withdrawalRequest = new TransactionRequest(
+                            sourceAccount.id(),
+                            sourceAccount.customerId(),
+                            request.amount(),
+                            "Transferencia enviada a " + targetAccount.accountNumber() + ": " + request.description()
+                    );
+
+                    log.info("Iniciando fase de retiro interno para cuenta de origen: {}", sourceAccount.id());
+                    // Llamada a la versión interna que incluye tarificación y validación de saldo.
+                    return processWithdrawalInternal(withdrawalRequest, sourceAccount)
+
+                            // Manejo específico del fallo en retiro (e.g., saldo insuficiente)
+                            .onFailure().invoke(e -> {
+                                if (e instanceof InsufficientFundsException) {
+                                    log.warn("Transferencia rechazada: Saldo insuficiente en cuenta de origen {}.", sourceAccount.id());
+                                } else {
+                                    log.error("FALLO EN RETIRO: Transferencia abortada por fallo en retiro de origen {}: {}", sourceAccount.id(), e.getMessage());
+                                }
+                            })
+                            .onItem().transformToUni(withdrawalResponse -> {
+
+                                // 3. PREPARAR Y EJECUTAR DEPÓSITO (CUENTA DE DESTINO)
+                                TransactionRequest depositRequest = new TransactionRequest(
+                                        targetAccount.id(),
+                                        targetAccount.customerId(),
+                                        request.amount(),
+                                        "Transferencia recibida de " + sourceAccount.accountNumber() + ": " + request.description()
+                                );
+
+                                log.info("Retiro exitoso. Procediendo a depósito en cuenta destino: {}", targetAccount.id());
+
+                                return processDepositInternal(depositRequest, targetAccount)
+                                        .onFailure().invoke(e -> {
+                                            // PUNTO CRÍTICO: Si el depósito falla, el retiro ya se hizo.
+                                            log.error("FALLO EN DEPÓSITO: Transferencia fallida en destino {}. Se requiere lógica de compensación/reversión.", targetAccount.id());
+                                        });
+                            })
+                            .onItem().transform(depositResponse -> {
+
+                                log.info("TRANSFERENCIA EXITOSA: De {} a {} por {}", request.sourceAccountNumber(), request.targetAccountNumber(), request.amount());
+
+                                // 4. RESPUESTA CONSOLIDADA
+                                return TransactionResponse.builder()
+                                        .accountId(sourceAccount.id())
+                                        .id(UUID.randomUUID().toString())
+                                        .customerId(sourceAccount.customerId())
+                                        .transactionType(TransactionType.TRANSFER)
+                                        .amount(request.amount())
+                                        .transactionDate(depositResponse.transactionDate())
+                                        .description("Transferencia exitosa a " + targetAccount.accountNumber())
+                                        .externalReference(depositResponse.externalReference())
+                                        .build();
+                            });
+                });
+    }
+
+    /**
+     * Versión interna de retiro utilizada durante la transferencia.
+     * Recibe la cuenta ya cargada para evitar llamadas REST redundantes.
+     * @param request La solicitud de retiro (monto, descripción).
+     * @param account El objeto AccountResponse de la cuenta de origen (incluye saldo y reglas).
+     * @return Uni<TransactionResponse> El resultado de la transacción (simulado el core).
+     * @throws InsufficientFundsException Si la cuenta no tiene saldo suficiente.
+     */
+    private Uni<TransactionResponse> processWithdrawalInternal(TransactionRequest request, AccountResponse account) {
+        log.info("Processing internal withdrawal for account ID: {}", request.accountId());
+
+        // 1. APLICAR TARIFICACIÓN y CALCULAR DÉBITO TOTAL
+        // NOTA: Se asume que calculateFeeFromAccount(account) devuelve la comisión
+        BigDecimal fee = calculateFeeFromAccount(account);
+        // Monto total a DEBITAR del balance (Monto solicitado + Comisión)
+        BigDecimal totalDebitAmount = request.amount().add(fee);
+
+        // 2. VALIDACIÓN DE SALDO (Usando el balance ya cargado: account.balance())
+        if (account.balance().compareTo(totalDebitAmount) < 0) {
+            log.warn("RETIRO RECHAZADO: Saldo insuficiente. Cuenta: {}. Requiere: {}, Disponible: {}",
+                    request.accountId(), totalDebitAmount, account.balance());
+            return Uni.createFrom().failure(new InsufficientFundsException("Insufficient funds. Cannot withdraw " + totalDebitAmount + "."));
+        }
+
+        // 3. EJECUTAR CORE (Simulación: Actualizar el SALDO de forma atómica en el Account-Service)
+        // El core requiere el MONTO TOTAL A DEBITAR como NEGATIVO.
+        return executeCoreTransaction(
+                request.accountId(),
+                totalDebitAmount.negate(),
+                fee,
+                TransactionType.WITHDRAWAL
+        )
+                .onItem().transformToUni(coreResult -> {
+
+                    if (!coreResult.success()) {
+                        return Uni.createFrom().failure(new IllegalStateException("Core banking transaction failed for withdrawal."));
+                    }
+
+                    // 4. ACTUALIZAR CONTADOR y PERSISTIR
+                    notifyAccountService(request.accountId()); // Fire and Forget
+                    // Persistir el registro local con el monto solicitado original en negativo.
+                    return persistLocalTransaction(request, coreResult.coreTransactionId(), request.amount().negate(), fee, TransactionType.WITHDRAWAL);
+                });
+    }
+
+    /**
+     * Versión interna de depósito utilizada durante la transferencia.
+     * Recibe la cuenta ya cargada para aplicar tarificación.
+     * @param request La solicitud de depósito (monto, descripción).
+     * @param account El objeto AccountResponse de la cuenta de destino (incluye reglas).
+     * @return Uni<TransactionResponse> El resultado de la transacción (simulado el core).
+     */
+    private Uni<TransactionResponse> processDepositInternal(TransactionRequest request, AccountResponse account) {
+        log.info("Processing internal deposit for account ID: {}", request.accountId());
+
+        // 1. Aplicar la lógica de tarificación
+        // NOTA: Se asume que calculateFeeFromAccount(account) devuelve la comisión
+        BigDecimal fee = calculateFeeFromAccount(account);
+        // Monto real a depositar (Monto solicitado - Comisión)
+        BigDecimal netAmount = request.amount().subtract(fee);
+
+        // 2. Ejecutar CORE (Simulación: Actualiza el SALDO de forma atómica en el Account-Service)
+        // Se usa el monto NETO
+        return executeCoreTransaction(
+                request.accountId(),
+                netAmount, // Monto positivo
+                fee,
+                TransactionType.DEPOSIT
+        )
+                .onItem().transformToUni(coreResult -> {
+
+                    if (!coreResult.success()) {
+                        return Uni.createFrom().failure(new IllegalStateException("Core banking transaction failed for deposit."));
+                    }
+
+                    // 3. Actualizar CONTADOR y PERSISTIR
+                    notifyAccountService(request.accountId()); // Fire and Forget
+
+                    // 4. Persistir el registro localmente, usando el monto neto.
+                    return persistLocalTransaction(request, coreResult.coreTransactionId(), netAmount, fee, TransactionType.DEPOSIT);
+                });
     }
 
     private void validateActiveAccount(AccountResponse account) {

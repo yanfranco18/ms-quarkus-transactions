@@ -2,6 +2,7 @@ package com.bancario.transaction.service;
 
 import com.bancario.transaction.dto.TransactionRequest;
 import com.bancario.transaction.dto.TransactionResponse;
+import com.bancario.transaction.dto.TransferRequest;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 
@@ -45,4 +46,12 @@ public interface TransactionService {
      * @return Flujo reactivo (Multi) de TransactionResponse.
      */
     Multi<TransactionResponse> findByAccountId(String accountId);
+
+    /**
+     * Procesa una transferencia de fondos entre dos cuentas (origen y destino).
+     * Requiere los números de cuenta para la orquestación.
+     * @param request Datos de la transferencia (números de cuenta, monto, descripción).
+     * @return Uni<TransactionResponse> Respuesta consolidada de la transferencia.
+     */
+    Uni<TransactionResponse> processTransfer(TransferRequest request);
 }

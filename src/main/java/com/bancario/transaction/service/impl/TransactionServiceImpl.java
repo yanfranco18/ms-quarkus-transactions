@@ -7,6 +7,7 @@ import com.bancario.transaction.enums.CreditType;
 import com.bancario.transaction.enums.ProductType;
 import com.bancario.transaction.enums.TransactionType;
 import com.bancario.transaction.exception.InsufficientFundsException;
+import com.bancario.transaction.exception.TransferIncompleteException;
 import com.bancario.transaction.mapper.TransactionMapper;
 import com.bancario.transaction.repository.TransactionRepository;
 import com.bancario.transaction.repository.entity.Transaction;
@@ -204,10 +205,8 @@ public class TransactionServiceImpl implements TransactionService {
                 .onFailure().transform(e -> {
                     if (e instanceof NotFoundException) {
                         log.error("Transferencia fallida: Una de las cuentas no fue encontrada. Detalles: {}", e.getMessage());
-                        // Lanzamos un IllegalArgumentException para que el GlobalMapper lo atrape como 400 Bad Request
                         return new IllegalArgumentException("Source or target account not found. Check account numbers.");
                     }
-                    // Otros errores (e.g., 500 del Account-Service) se pasan como RuntimeException
                     return new RuntimeException("Failed to retrieve account details for transfer.", e);
                 })
                 .onItem().transformToUni(tuple -> {
@@ -232,19 +231,19 @@ public class TransactionServiceImpl implements TransactionService {
                     );
 
                     log.info("Iniciando fase de retiro interno para cuenta de origen: {}", sourceAccount.id());
-                    // Llamada a la versión interna que incluye tarificación y validación de saldo.
+                    // Llamada a la versión interna, pasando la cuenta de origen.
                     return processWithdrawalInternal(withdrawalRequest, sourceAccount)
 
-                            // Manejo específico del fallo en retiro (e.g., saldo insuficiente)
-                            .onFailure().invoke(e -> {
+                            // Manejo de fallo en retiro (ej. Saldo insuficiente).
+                            .onFailure().transform(e -> {
                                 if (e instanceof InsufficientFundsException) {
                                     log.warn("Transferencia rechazada: Saldo insuficiente en cuenta de origen {}.", sourceAccount.id());
-                                } else {
-                                    log.error("FALLO EN RETIRO: Transferencia abortada por fallo en retiro de origen {}: {}", sourceAccount.id(), e.getMessage());
                                 }
+                                return e;
                             })
                             .onItem().transformToUni(withdrawalResponse -> {
 
+                                // Retiro exitoso.
                                 // 3. PREPARAR Y EJECUTAR DEPÓSITO (CUENTA DE DESTINO)
                                 TransactionRequest depositRequest = new TransactionRequest(
                                         targetAccount.id(),
@@ -256,26 +255,53 @@ public class TransactionServiceImpl implements TransactionService {
                                 log.info("Retiro exitoso. Procediendo a depósito en cuenta destino: {}", targetAccount.id());
 
                                 return processDepositInternal(depositRequest, targetAccount)
-                                        .onFailure().invoke(e -> {
-                                            // PUNTO CRÍTICO: Si el depósito falla, el retiro ya se hizo.
-                                            log.error("FALLO EN DEPÓSITO: Transferencia fallida en destino {}. Se requiere lógica de compensación/reversión.", targetAccount.id());
+
+                                        // *** LÓGICA DE COMPENSACIÓN (REVERSIÓN) ***
+                                        .onFailure().recoverWithUni(depositFailure -> {
+                                            log.error("FALLO CRÍTICO EN DEPÓSITO: Transferencia fallida en destino {}. Iniciando reversión...", targetAccount.id(), depositFailure);
+
+                                            // Creamos la solicitud de reversión (DEPÓSITO a la cuenta ORIGEN).
+                                            TransactionRequest reversalRequest = new TransactionRequest(
+                                                    sourceAccount.id(),
+                                                    sourceAccount.customerId(),
+                                                    request.amount(),
+                                                    "REVERSION: Fallo en transferencia a " + targetAccount.accountNumber()
+                                            );
+
+                                            // Ejecutamos la reversión (Depósito Interno a la cuenta de ORIGEN).
+                                            return processDepositInternal(reversalRequest, sourceAccount)
+                                                    .onFailure().invoke(reversalFailure -> {
+                                                        // ¡ALERTA CRÍTICA! Si la reversión falla, se necesita intervención manual URGENTE.
+                                                        log.error("¡ALERTA CRÍTICA! La reversión a la cuenta de origen {} también falló.", sourceAccount.id(), reversalFailure);
+                                                    })
+                                                    .onItem().transformToUni(reversalSuccess -> {
+                                                        // La reversión fue exitosa.
+                                                        log.info("REVERSIÓN EXITOSA: Saldo restaurado en cuenta de origen {}.", sourceAccount.id());
+                                                        // Lanzamos la excepción para el GlobalMapper (500)
+                                                        throw new TransferIncompleteException(
+                                                                String.format("Transfer failed: Deposit to target account %s failed, but withdrawal was successfully reverted.",
+                                                                        targetAccount.accountNumber())
+                                                        );
+                                                    });
+                                        })
+                                        // Fin de la compensación
+
+                                        .onItem().transform(depositResponse -> {
+
+                                            log.info("TRANSFERENCIA EXITOSA: De {} a {} por {}", request.sourceAccountNumber(), request.targetAccountNumber(), request.amount());
+
+                                            // 4. RESPUESTA CONSOLIDADA
+                                            return TransactionResponse.builder()
+                                                    .accountId(sourceAccount.id())
+                                                    .id(UUID.randomUUID().toString())
+                                                    .customerId(sourceAccount.customerId())
+                                                    .transactionType(TransactionType.TRANSFER)
+                                                    .amount(request.amount())
+                                                    .transactionDate(depositResponse.transactionDate())
+                                                    .description("Transferencia exitosa a " + targetAccount.accountNumber())
+                                                    .externalReference(depositResponse.externalReference())
+                                                    .build();
                                         });
-                            })
-                            .onItem().transform(depositResponse -> {
-
-                                log.info("TRANSFERENCIA EXITOSA: De {} a {} por {}", request.sourceAccountNumber(), request.targetAccountNumber(), request.amount());
-
-                                // 4. RESPUESTA CONSOLIDADA
-                                return TransactionResponse.builder()
-                                        .accountId(sourceAccount.id())
-                                        .id(UUID.randomUUID().toString())
-                                        .customerId(sourceAccount.customerId())
-                                        .transactionType(TransactionType.TRANSFER)
-                                        .amount(request.amount())
-                                        .transactionDate(depositResponse.transactionDate())
-                                        .description("Transferencia exitosa a " + targetAccount.accountNumber())
-                                        .externalReference(depositResponse.externalReference())
-                                        .build();
                             });
                 });
     }
@@ -522,18 +548,16 @@ public class TransactionServiceImpl implements TransactionService {
                     BigDecimal currentBalance = account.balance();
                     BigDecimal newBalance = currentBalance.add(netAmount); // netAmount ya es positivo para depósito, negativo para retiro
 
-                    // 3. Crear el AccountResponse actualizado
-                    // NOTA: Usamos el método updateAccount solo para calcular y generar el DTO correcto
-                    AccountResponse updatedAccount = new AccountResponse(
+                    // 3. Retornar el AccountResponse actualizado directamente (CORRECCIÓN DEL WARNING)
+                    return new AccountResponse(
                             account.id(), account.customerId(), account.accountNumber(),
                             account.productType(), account.accountType(), account.creditType(),
-                            account.status(), account.openingDate(), newBalance, account.amountUsed(), // <-- Nuevo Balance
+                            account.status(), account.openingDate(), newBalance, account.amountUsed(),
                             account.maintenanceFeeAmount(), account.requiredDailyAverage(),
                             account.freeTransactionLimit(), account.transactionFeeAmount(),
                             account.currentMonthlyTransactions(), account.monthlyMovements(),
                             account.specificDepositDate(), account.holders(), account.signatories()
                     );
-                    return updatedAccount;
                 })
                 // 4. Llamar al endpoint de actualización de saldo del Account-Service
                 .onItem().transformToUni(updatedAccount ->

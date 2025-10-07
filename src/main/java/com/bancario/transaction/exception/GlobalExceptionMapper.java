@@ -19,29 +19,30 @@ public class GlobalExceptionMapper implements ExceptionMapper<Exception> {
         int status;
         String error;
 
-        // 1. MANEJO ESPECÍFICO (Insuficiencia de Fondos - La más específica)
         switch (exception) {
+            // 1. FALLO DE NEGOCIO ESPECÍFICO (400)
             case InsufficientFundsException insufficientFundsException -> {
                 status = Response.Status.BAD_REQUEST.getStatusCode(); // 400
-
-                error = "Insufficient Funds"; // Mensaje específico para el error de negocio
+                error = "Insufficient Funds";
             }
-            // 2. MANEJO GENÉRICO DE VALIDACIÓN DE NEGOCIO (Menos específico)
+            // 2. FALLO DE VALIDACIÓN GENÉRICO (400)
             case IllegalArgumentException illegalArgumentException -> {
                 status = Response.Status.BAD_REQUEST.getStatusCode(); // 400
-
                 error = "Bad Request";
             }
-            // 3. MANEJO DE ERRORES DE INFRAESTRUCTURA
+            // 3. FALLO CRÍTICO DE ORQUESTACIÓN (500)
+            case TransferIncompleteException transferIncompleteException -> {
+                status = Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(); // 500
+                error = "Transfer Incomplete - Funds Reverted"; // Indica que el proceso falló a mitad y se compensó.
+            }
+            // 4. MANEJO DE ERRORES DE INFRAESTRUCTURA (500)
             case MongoCommandException mongoCommandException -> {
                 status = Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(); // 500
-
                 error = "Database Error";
             }
-            // 4. MANEJO DE ERRORES POR DEFECTO
+            // 5. MANEJO DE ERRORES POR DEFECTO (500)
             case null, default -> {
                 status = Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(); // 500
-
                 error = "Internal Server Error";
             }
         }

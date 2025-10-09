@@ -12,6 +12,7 @@ public record TransactionResponse(
         String customerId,
         TransactionType transactionType,
         BigDecimal amount,
+        BigDecimal fee, // Monto de la comisión aplicada a la transacción
         LocalDateTime transactionDate,
         String description,
         String externalReference

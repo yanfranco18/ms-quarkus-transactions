@@ -1,10 +1,14 @@
 package com.bancario.transaction.service;
 
+import com.bancario.transaction.dto.CommissionReportDto;
 import com.bancario.transaction.dto.TransactionRequest;
 import com.bancario.transaction.dto.TransactionResponse;
 import com.bancario.transaction.dto.TransferRequest;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+
+import java.time.LocalDate;
+import java.util.List;
 
 public interface TransactionService {
 
@@ -54,4 +58,13 @@ public interface TransactionService {
      * @return Uni<TransactionResponse> Respuesta consolidada de la transferencia.
      */
     Uni<TransactionResponse> processTransfer(TransferRequest request);
+
+    /**
+     * Obtiene los datos detallados de comisiones cobradas, filtrados por rango de fechas.
+     * Este método está optimizado para ser consumido por el Report-Service.
+     * * @param startDate La fecha de inicio del periodo.
+     * @param endDate La fecha de fin del periodo.
+     * @return Uni que emite una lista de CommissionReportDto.
+     */
+    Uni<List<CommissionReportDto>> getCommissionsReportData(LocalDate startDate, LocalDate endDate);
 }

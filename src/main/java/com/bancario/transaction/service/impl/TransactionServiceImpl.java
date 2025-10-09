@@ -21,9 +21,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @ApplicationScoped
@@ -67,8 +69,17 @@ public class TransactionServiceImpl implements TransactionService {
                                 // 4. Actualizar el contador (Llama al PATCH atómico, Fire and Forget)
                                 notifyAccountService(request.accountId());
 
-                                // 5. Persistir el registro localmente, incluyendo el externalReference
-                                return persistLocalTransaction(request, coreResult.coreTransactionId(), netAmount, fee, TransactionType.DEPOSIT);
+                                // 5. OBTENER LA CUENTA COMPLETA PARA PERSISTENCIA DE PRODUCTO (LLAMADA ADICIONAL)
+                                return accountServiceRestClient.getAccountById(request.accountId())
+                                        .onItem().ifNull().failWith(() -> {
+                                            log.error("DEPOSITO FALLIDO: Cuenta desapareció después del Core. Imposible persistir.");
+                                            // Esto es un fallo crítico, pero la compensación no aplica aquí.
+                                            return new IllegalStateException("Account data missing for persistence.");
+                                        })
+                                        .onItem().transformToUni(account ->
+                                                // 6. Persistir el registro localmente, incluyendo el externalReference y la cuenta
+                                                persistLocalTransaction(request, account, coreResult.coreTransactionId(), netAmount, fee, TransactionType.DEPOSIT)
+                                        );
                             });
                 });
     }
@@ -91,7 +102,7 @@ public class TransactionServiceImpl implements TransactionService {
 
                     // 3. VALIDACIÓN DE SALDO (Compara con 100.50)
                     if (account.balance().compareTo(totalDebitAmount) < 0) {
-                        log.warn("RETIRO RECHAZADO: Saldo insuficiente. Cuenta: " + request.accountId());
+                        log.warn("RETIRO RECHAZADO: Saldo insuficiente. Cuenta: {}", request.accountId());
                         return Uni.createFrom().failure(new InsufficientFundsException("Insufficient funds. Cannot withdraw " + totalDebitAmount + "."));
                     }
 
@@ -114,7 +125,7 @@ public class TransactionServiceImpl implements TransactionService {
 
                                 // 6. PERSISTIR registro local
                                 // Se registra el monto solicitado original (100.00) en negativo.
-                                return persistLocalTransaction(request, coreResult.coreTransactionId(), request.amount().negate(), fee, TransactionType.WITHDRAWAL);
+                                return persistLocalTransaction(request, account, coreResult.coreTransactionId(), request.amount().negate(), fee, TransactionType.WITHDRAWAL);
                             });
                 });
     }
@@ -306,6 +317,30 @@ public class TransactionServiceImpl implements TransactionService {
                 });
     }
 
+    @Override
+    public Uni<List<CommissionReportDto>> getCommissionsReportData(LocalDate startDate, LocalDate endDate) {
+
+        // 1. Lógica de Rango de Fechas (Para incluir todo el día de endDate)
+        // [startDate 00:00:00] hasta [endDate + 1 día 00:00:00] (exclusivo)
+        LocalDateTime start = startDate.atStartOfDay();
+        LocalDateTime end = endDate.plusDays(1).atStartOfDay();
+
+        log.info("BUSQUEDA REPORTE | Servicio: Solicitando datos de comisiones desde {} hasta {} (exclusivo)", start, end);
+
+        return transactionRepository.findCommissionsByDateRange(start, end)
+                // 3. Mapeo Reactivo
+                .onItem().transform(transactions -> {
+                    log.debug("BUSQUEDA REPORTE | Servicio: {} transacciones encontradas. Mapeando a DTO.", transactions.size());
+                    // Mapeamos cada entidad de transacción a un CommissionReportDto
+                    return transactions.stream()
+                            .map(transactionMapper::toCommissionReportDto)
+                            .collect(Collectors.toList());
+                })
+                .onFailure().invoke(e ->
+                        log.error("BUSQUEDA REPORTE | Error al obtener o mapear datos de comisiones: {}", e.getMessage(), e)
+                );
+    }
+
     /**
      * Versión interna de retiro utilizada durante la transferencia.
      * Recibe la cuenta ya cargada para evitar llamadas REST redundantes.
@@ -347,7 +382,7 @@ public class TransactionServiceImpl implements TransactionService {
                     // 4. ACTUALIZAR CONTADOR y PERSISTIR
                     notifyAccountService(request.accountId()); // Fire and Forget
                     // Persistir el registro local con el monto solicitado original en negativo.
-                    return persistLocalTransaction(request, coreResult.coreTransactionId(), request.amount().negate(), fee, TransactionType.WITHDRAWAL);
+                    return persistLocalTransaction(request, account, coreResult.coreTransactionId(), request.amount().negate(), fee, TransactionType.WITHDRAWAL);
                 });
     }
 
@@ -360,15 +395,12 @@ public class TransactionServiceImpl implements TransactionService {
      */
     private Uni<TransactionResponse> processDepositInternal(TransactionRequest request, AccountResponse account) {
         log.info("Processing internal deposit for account ID: {}", request.accountId());
-
         // 1. Aplicar la lógica de tarificación
-        // NOTA: Se asume que calculateFeeFromAccount(account) devuelve la comisión
         BigDecimal fee = calculateFeeFromAccount(account);
         // Monto real a depositar (Monto solicitado - Comisión)
         BigDecimal netAmount = request.amount().subtract(fee);
 
         // 2. Ejecutar CORE (Simulación: Actualiza el SALDO de forma atómica en el Account-Service)
-        // Se usa el monto NETO
         return executeCoreTransaction(
                 request.accountId(),
                 netAmount, // Monto positivo
@@ -376,16 +408,14 @@ public class TransactionServiceImpl implements TransactionService {
                 TransactionType.DEPOSIT
         )
                 .onItem().transformToUni(coreResult -> {
-
                     if (!coreResult.success()) {
                         return Uni.createFrom().failure(new IllegalStateException("Core banking transaction failed for deposit."));
                     }
-
                     // 3. Actualizar CONTADOR y PERSISTIR
                     notifyAccountService(request.accountId()); // Fire and Forget
-
-                    // 4. Persistir el registro localmente, usando el monto neto.
-                    return persistLocalTransaction(request, coreResult.coreTransactionId(), netAmount, fee, TransactionType.DEPOSIT);
+                    // 4. Persistir el registro localmente.
+                    // CORRECCIÓN CLAVE: Usamos 'netAmount' y añadimos 'account'.
+                    return persistLocalTransaction(request, account, coreResult.coreTransactionId(), netAmount, fee, TransactionType.DEPOSIT);
                 });
     }
 
@@ -571,11 +601,29 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     // Método para persistir la transacción localmente (asumiendo que está bien mapeado)
-    private Uni<TransactionResponse> persistLocalTransaction(TransactionRequest request, String coreId, BigDecimal netAmount, BigDecimal fee, TransactionType type) {
+    private Uni<TransactionResponse> persistLocalTransaction(
+            TransactionRequest request,
+            AccountResponse account,
+            String coreId,
+            BigDecimal finalAmountToPersist,
+            BigDecimal fee,
+            TransactionType type
+    ) {
         Transaction transaction = transactionMapper.toEntity(request);
+
+        transaction.setFee(fee);
+        transaction.setProductType(account.productType());
+        if (account.productType() == ProductType.PASSIVE) {
+            transaction.setProductName(account.accountType().name());
+        } else if (account.productType() == ProductType.ACTIVE) {
+            transaction.setProductName(account.creditType() != null ? account.creditType().name() : account.productType().name());
+        } else {
+            transaction.setProductName(account.productType().name());
+        }
+
         transaction.setTransactionType(type);
         transaction.setTransactionDate(LocalDateTime.now());
-        transaction.setAmount(netAmount);
+        transaction.setAmount(finalAmountToPersist);
         transaction.setDescription(request.description() + (fee.compareTo(BigDecimal.ZERO) > 0 ? " (Fee: " + fee + ")" : ""));
         transaction.setExternalReference(coreId);
 

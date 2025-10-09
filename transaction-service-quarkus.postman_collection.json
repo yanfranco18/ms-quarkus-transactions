@@ -21,7 +21,7 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\r\n    \"accountId\": \"68dd338b11df9ab17e6d22dc\",\r\n    \"customerId\": \"68dd2f139efa39ca431a4e3f\",\r\n    \"amount\": 100.00,\r\n    \"description\": \"Deposito de prueba gratuito 6\"\r\n}",
+					"raw": "{\r\n    \"accountId\": \"68dd338b11df9ab17e6d22dc\",\r\n    \"customerId\": \"68dd2f139efa39ca431a4e3f\",\r\n    \"amount\": 10.50,\r\n    \"description\": \"Deposito de prueba gratuito 6\"\r\n}",
 					"options": {
 						"raw": {
 							"language": "json"
@@ -165,6 +165,67 @@
 					],
 					"path": [
 						"transfers"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "transactions-commissions-between-startDate&endDate",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{URL_BASE}}/commissions?startDate=2025-10-01&endDate=2025-10-07",
+					"host": [
+						"{{URL_BASE}}"
+					],
+					"path": [
+						"commissions"
+					],
+					"query": [
+						{
+							"key": "startDate",
+							"value": "2025-10-01"
+						},
+						{
+							"key": "endDate",
+							"value": "2025-10-07"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "400-badrequest-transactions-commissions-between-startDate&endDate",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{URL_BASE}}commissions?startDate=2025-10-30&endDate=2025-10-01",
+					"host": [
+						"{{URL_BASE}}commissions"
+					],
+					"query": [
+						{
+							"key": "startDate",
+							"value": "2025-10-30"
+						},
+						{
+							"key": "endDate",
+							"value": "2025-10-01"
+						}
 					]
 				}
 			},

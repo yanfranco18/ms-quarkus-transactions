@@ -1,5 +1,6 @@
 package com.bancario.transaction.resource;
 
+import com.bancario.transaction.dto.CommissionReportDto;
 import com.bancario.transaction.dto.TransactionRequest;
 import com.bancario.transaction.dto.TransactionResponse;
 import com.bancario.transaction.dto.TransferRequest;
@@ -11,13 +12,19 @@ import jakarta.validation.Valid;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import lombok.extern.slf4j.Slf4j;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.media.Content;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
 import org.eclipse.microprofile.openapi.annotations.parameters.RequestBody;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
+import java.time.LocalDate;
+import java.util.List;
+
+@Slf4j
 @Path("/transactions")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -169,6 +176,41 @@ public class TransactionResource {
         return transactionService.processTransfer(request)
                 .onItem().transform(response ->
                         Response.ok(response).build()
+                );
+    }
+
+    @GET
+    @Path("/commissions")
+    @Operation(summary = "Obtiene el detalle de comisiones cobradas en un rango de fechas.")
+    @APIResponse(
+            responseCode = "200",
+            description = "Lista de comisiones cobradas detalladas.",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = CommissionReportDto.class)
+            )
+    )
+    @APIResponse(responseCode = "400", description = "Fechas inválidas o formato incorrecto.")
+    @APIResponse(responseCode = "500", description = "Error interno del servidor")
+    public Uni<List<CommissionReportDto>> getCommissionsForReport(
+            @QueryParam("startDate")
+            @Parameter(description = "Fecha de inicio del periodo (YYYY-MM-DD)", required = true, example = "2025-01-01")
+            LocalDate startDate,
+
+            @QueryParam("endDate")
+            @Parameter(description = "Fecha de fin del periodo (YYYY-MM-DD)", required = true, example = "2025-01-31")
+            LocalDate endDate
+    ) {
+        log.info("API | Petición de reporte de comisiones recibida. Inicio: {}, Fin: {}", startDate, endDate);
+
+        if (startDate.isAfter(endDate)) {
+            log.warn("API | Validación fallida: startDate ({}) es posterior a endDate ({}).", startDate, endDate);
+            throw new IllegalArgumentException("La fecha de inicio no puede ser posterior a la fecha de fin.");
+        }
+
+        return transactionService.getCommissionsReportData(startDate, endDate)
+                .onFailure().invoke(e ->
+                        log.error("API | Error al devolver datos de comisiones: {}", e.getMessage())
                 );
     }
 }

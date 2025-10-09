@@ -1,5 +1,6 @@
 package com.bancario.transaction.repository.entity;
 
+import com.bancario.transaction.enums.ProductType;
 import com.bancario.transaction.enums.TransactionType;
 import io.quarkus.mongodb.panache.common.MongoEntity;
 import lombok.Data;
@@ -18,6 +19,11 @@ public class Transaction {
     public String customerId;
     public TransactionType transactionType;
     public BigDecimal amount;
+    // --- CAMPOS NECESARIOS PARA REPORTES ---
+    public BigDecimal fee;
+    public ProductType productType;     // (PASSIVE o ACTIVE)
+    public String productName;          // (Detalle: ej., SAVINGS_ACCOUNT, CREDIT_CARD)
+
     public LocalDateTime transactionDate;
     public String description;
     public String externalReference;

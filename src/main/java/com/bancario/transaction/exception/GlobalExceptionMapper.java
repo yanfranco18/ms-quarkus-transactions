@@ -25,6 +25,11 @@ public class GlobalExceptionMapper implements ExceptionMapper<Exception> {
                 status = Response.Status.BAD_REQUEST.getStatusCode(); // 400
                 error = "Insufficient Funds";
             }
+            case ServiceUnavailableException serviceUnavailableException -> {
+                // Excepción lanzada por el Fallback/Circuit Breaker
+                status = Response.Status.SERVICE_UNAVAILABLE.getStatusCode(); // 503
+                error = "Service Unavailable (Fault Tolerance)";
+            }
             // 2. FALLO DE VALIDACIÓN GENÉRICO (400)
             case IllegalArgumentException illegalArgumentException -> {
                 status = Response.Status.BAD_REQUEST.getStatusCode(); // 400
@@ -47,12 +52,13 @@ public class GlobalExceptionMapper implements ExceptionMapper<Exception> {
             }
         }
 
+        assert exception != null;
         ApiError apiError = ApiError.builder()
                 .timestamp(LocalDateTime.now())
                 .status(status)
                 .error(error)
                 .message(exception.getMessage())
-                .path(uriInfo.getPath()) // Usando UriInfo para obtener la ruta
+                .path(uriInfo.getPath())
                 .build();
 
         return Response.status(status).entity(apiError).build();

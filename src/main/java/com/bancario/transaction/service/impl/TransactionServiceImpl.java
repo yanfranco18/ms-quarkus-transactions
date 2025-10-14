@@ -7,6 +7,7 @@ import com.bancario.transaction.enums.CreditType;
 import com.bancario.transaction.enums.ProductType;
 import com.bancario.transaction.enums.TransactionType;
 import com.bancario.transaction.exception.InsufficientFundsException;
+import com.bancario.transaction.exception.ServiceUnavailableException;
 import com.bancario.transaction.exception.TransferIncompleteException;
 import com.bancario.transaction.mapper.TransactionMapper;
 import com.bancario.transaction.repository.TransactionRepository;
@@ -18,6 +19,9 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.NotFoundException;
 import lombok.extern.slf4j.Slf4j;
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Fallback;
+import org.eclipse.microprofile.faulttolerance.Timeout;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import java.math.BigDecimal;
@@ -42,6 +46,9 @@ public class TransactionServiceImpl implements TransactionService {
     AccountServiceRestClient accountServiceRestClient;
 
     @Override
+    @Timeout
+    @CircuitBreaker
+    @Fallback(fallbackMethod = "fallbackProcessDeposit")
     public Uni<TransactionResponse> processDeposit(TransactionRequest request) {
         log.info("Processing deposit for account ID: {}", request.accountId());
 
@@ -85,6 +92,9 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     @Override
+    @Timeout
+    @CircuitBreaker
+    @Fallback(fallbackMethod = "fallbackProcessWithdrawal")
     public Uni<TransactionResponse> processWithdrawal(TransactionRequest request) {
         log.info("Processing withdrawal for account ID: {}", request.accountId());
 
@@ -201,6 +211,9 @@ public class TransactionServiceImpl implements TransactionService {
      * @throws RuntimeException Si hay fallos en la comunicación con el Account-Service o en el depósito.
      */
     @Override
+    @Timeout // Lee el valor de 1500ms (transaction-service.orchestration-timeout.ms)
+    @CircuitBreaker
+    @Fallback(fallbackMethod = "fallbackProcessTransfer")
     public Uni<TransactionResponse> processTransfer(TransferRequest request) {
         log.info("TRANSFERENCIA INICIADA: De {} a {} por {}",
                 request.sourceAccountNumber(), request.targetAccountNumber(), request.amount());
@@ -318,6 +331,9 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     @Override
+    @Timeout
+    @CircuitBreaker
+    @Fallback(fallbackMethod = "fallbackCommissionsReportData")
     public Uni<List<CommissionReportDto>> getCommissionsReportData(LocalDate startDate, LocalDate endDate) {
 
         // 1. Lógica de Rango de Fechas (Para incluir todo el día de endDate)
@@ -629,5 +645,37 @@ public class TransactionServiceImpl implements TransactionService {
 
         return transactionRepository.persist(transaction)
                 .onItem().transform(transactionMapper::toResponse);
+    }
+
+    // FALLBACK para processDeposit
+    public Uni<TransactionResponse> fallbackProcessDeposit(TransactionRequest request, Throwable failure) {
+        log.error("FALLBACK ACTIVO (Depósito) para cuenta {}. Causa: {}", request.accountId(), failure.getMessage());
+        String errorMessage = "El servicio de depósito está inoperativo. No se pudo completar la transacción.";
+        // Fallo crítico: No podemos asumir el éxito, así que lanzamos 503.
+        return Uni.createFrom().failure(new ServiceUnavailableException(errorMessage, failure));
+    }
+
+    // FALLBACK para processWithdrawal
+    public Uni<TransactionResponse> fallbackProcessWithdrawal(TransactionRequest request, Throwable failure) {
+        log.error("FALLBACK ACTIVO (Retiro) para cuenta {}. Causa: {}", request.accountId(), failure.getMessage());
+        String errorMessage = "El servicio de retiro está inoperativo. No se pudo completar la transacción.";
+        return Uni.createFrom().failure(new ServiceUnavailableException(errorMessage, failure));
+    }
+
+    // FALLBACK para processTransfer
+    public Uni<TransactionResponse> fallbackProcessTransfer(TransferRequest request, Throwable failure) {
+        log.error("FALLBACK ACTIVO (Transferencia) de {} a {}. Causa: {}", request.sourceAccountNumber(), request.targetAccountNumber(), failure.getMessage());
+        String errorMessage = "El servicio de transferencias está inoperativo. No se pudo iniciar la orquestación.";
+        // Fallo crítico: La transferencia no puede garantizarse.
+        return Uni.createFrom().failure(new ServiceUnavailableException(errorMessage, failure));
+    }
+
+    // FALLBACK para getCommissionsReportData
+    public Uni<List<CommissionReportDto>> fallbackCommissionsReportData(LocalDate startDate, LocalDate endDate, Throwable failure) {
+        log.error("FALLBACK ACTIVO (Reporte) desde {} hasta {}. Causa: {}", startDate, endDate, failure.getMessage());
+        // El Fallback para reportes degradados debe devolver un resultado vacío o un error 503.
+        String errorMessage = "El servicio de reportes de comisiones está inoperativo.";
+        return Uni.createFrom().failure(new ServiceUnavailableException(errorMessage, failure));
+        // Alternativa: return Uni.createFrom().item(Collections.emptyList());
     }
 }
